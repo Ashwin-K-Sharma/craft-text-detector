@@ -203,8 +203,9 @@ def getDetBoxes_core(textmap, linkmap, text_threshold, link_threshold, low_text)
         box = np.roll(box, 4 - startidx, 0)
         box = np.array(box)
 
-        det.append(box)
-        mapper.append(k)
+        if np.count_nonzero(box) != 0:
+            det.append(box)
+            mapper.append(k)
 
     return det, labels, mapper
 
@@ -242,6 +243,14 @@ def getPoly_core(boxes, labels, mapper, linkmap):
         cur_label = mapper[k]
         word_label[word_label != cur_label] = 0
         word_label[word_label > 0] = 1
+
+        flag = False
+        if h > w:
+            a = w
+            w = h
+            h = a
+            word_label = word_label.transpose()
+            flag = True
 
         """ Polygon generation """
         # find top/bottom contours
@@ -314,7 +323,7 @@ def getPoly_core(boxes, labels, mapper, linkmap):
             continue
 
         # calc median maximum of pivot points
-        half_char_h = np.median(seg_height) * expand_ratio / 2
+        half_char_h = max_len / 2  # np.median(seg_height) * expand_ratio / 2
 
         # calc gradiant and apply to make horizontal pivots
         new_pp = []
@@ -325,7 +334,7 @@ def getPoly_core(boxes, labels, mapper, linkmap):
                 new_pp.append([x, cy - half_char_h, x, cy + half_char_h])
                 continue
             rad = -math.atan2(dy, dx)
-            c, s = half_char_h * math.cos(rad), half_char_h * math.sin(rad)
+            c, s = abs(half_char_h * math.cos(rad)), half_char_h * math.sin(rad)
             new_pp.append([x - s, cy - c, x + s, cy + c])
 
         # get edge points to cover character heatmaps
@@ -382,14 +391,19 @@ def getPoly_core(boxes, labels, mapper, linkmap):
 
         # make final polygon
         poly = []
-        poly.append(warpCoord(Minv, (spp[0], spp[1])))
+        ix = 0
+        iy = 1
+        if flag:              
+            ix = 1
+            iy = 0
+        poly.append(warpCoord(Minv, (spp[ix], spp[iy])))
         for p in new_pp:
-            poly.append(warpCoord(Minv, (p[0], p[1])))
-        poly.append(warpCoord(Minv, (epp[0], epp[1])))
-        poly.append(warpCoord(Minv, (epp[2], epp[3])))
+            poly.append(warpCoord(Minv, (p[ix], p[iy])))
+        poly.append(warpCoord(Minv, (epp[ix], epp[iy])))
+        poly.append(warpCoord(Minv, (epp[ix + 2], epp[iy + 2])))
         for p in reversed(new_pp):
-            poly.append(warpCoord(Minv, (p[2], p[3])))
-        poly.append(warpCoord(Minv, (spp[2], spp[3])))
+            poly.append(warpCoord(Minv, (p[ix + 2], p[iy + 2])))
+        poly.append(warpCoord(Minv, (spp[ix + 2], spp[iy + 2])))
 
         # add to final result
         polys.append(np.array(poly))
@@ -412,8 +426,9 @@ def getDetBoxes(textmap, linkmap, text_threshold, link_threshold, low_text, poly
 
 def adjustResultCoordinates(polys, ratio_w, ratio_h, ratio_net=2):
     if len(polys) > 0:
-        polys = np.array(polys)
+        polys_filtered = [poly for poly in polys if poly is not None]
+        polys = np.array(polys_filtered)
         for k in range(len(polys)):
             if polys[k] is not None:
                 polys[k] *= (ratio_w * ratio_net, ratio_h * ratio_net)
-    return polys
+        return polys
